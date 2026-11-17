@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "possession"
+version = "1.0.0"
+description = "Ball-possession inference from automatic tracking data (More than a Hack 2027, phase 1)"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy==2.4.6",
+    "PyYAML==6.0.3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pandas==3.1.1",
+    "pytest==9.2.0",
+    "ruff==0.17.5",
+    "mypy==2.4.1",
+    "types-PyYAML==6.0.12.20261113",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "SIM", "C4", "RUF", "PL", "D"]
+ignore = [
+    "D203",    # conflicts with D211
+    "D213",    # conflicts with D212
+    "PLR2004", # tests compare against literal expectations
+    "PLR0913", # numeric kernels legitimately take several arrays
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["possession"]
+known-local-folder = ["synthetic", "tests_paths"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["D"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["src", "scripts"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

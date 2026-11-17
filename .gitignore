@@ -1,0 +1,27 @@
+# Match data is licensed for the competition only and must never be committed.
+data/
+dataset/
+*.mp4
+*_atd.txt
+*_atd.xml
+*_homography.csv
+*_smart_tagging.xml
+# Derived artefacts that could reconstruct the data or the labels.
+.cache/
+outputs/
+*.npz
+*.npy
+*.jsonl
+*.parquet
+*.csv
+# Environment and tooling.
+.venv/
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+*.egg-info/
+# Build artefacts and editor settings.
+build/
+.idea/
