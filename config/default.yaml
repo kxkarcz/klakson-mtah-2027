@@ -1,0 +1,412 @@
+# Every tunable number of the pipeline, with its unit and the reason for its value.
+#
+# The values come from football knowledge and from label-free diagnostics computed on the whole
+# match (number and length of possessions and stoppages, agreement with Smart Tagging, stability
+# under perturbation); see scripts/sensitivity.py.
+#
+# The video runs at 25 fps: 25 frames = 1 second.
+
+data:
+  # Environment variable holding the root of the data bundle (same one the official repo uses).
+  data_dir_env: MTAH_DATA_DIR
+  # Paths relative to that root. Only the tactical recording is used: it is the timeline the
+  # submission is indexed to.
+  tracking_metadata: tactical/BAR-ATH_tactical_atd.xml
+  tracking_raw: tactical/BAR-ATH_tactical_atd.txt
+  smart_tagging: tactical/BAR-ATH_tactical_smart_tagging.xml
+
+ball:
+  # [frames] Gaps up to 0.5 s are bridged linearly: in half a second a ball can only keep
+  # travelling; any longer and it may have been received and played again.
+  max_interpolation_gap_frames: 12
+  # [frames] Speed is averaged over 0.2 s to suppress pixel jitter without blurring a kick.
+  speed_smoothing_frames: 5
+  # [m] A ball this far beyond a line is called off the pitch. Covers the 0.3 m uncertainty of
+  # the pitch length (105.0 in the metadata vs 105.3 measured) plus the ball's own width.
+  out_of_bounds_margin_m: 0.5
+  # [m/s] Below walking pace the ball is "still": placed for a set piece or held.
+  stationary_speed_mps: 1.0
+  # [m/s] Above a sprinting player's pace the ball has been struck, not carried.
+  fast_speed_mps: 5.0
+  # [frames] Disappearances up to 2 s are occlusions (a tackle, a crowded box).
+  short_gap_max_frames: 50
+  # [frames] Up to 8 s is ambiguous (an aerial ball, a quick throw-in); beyond it the ball has
+  # almost always left the field of play.
+  medium_gap_max_frames: 200
+  # [m/s] No football travels faster than ~35-40 m/s; a detection needing more than this both
+  # to arrive and to leave is a false positive.
+  max_plausible_speed_mps: 45.0
+
+activity:
+  # [frames] One second: long enough to average out individual accelerations, short enough to
+  # follow the whistle.
+  smoothing_frames: 25
+  # [players] With fewer tracked the average is dominated by one or two runners.
+  min_players: 10
+  # Use max(activity now, activity a few seconds ahead) as the live/dead cue. Players stop
+  # within ~1 s of a whistle but need several seconds to get back up to speed after a
+  # restart, so present activity keeps saying "dead" after play has resumed.
+  # On: decoded restarts within 1 s of the typical position inside a set-piece tag rise from
+  # 22% to 34%, their spread falls from 3.9 s to 3.5 s, agreement with tagging votes does not
+  # fall (0.822 -> 0.827), and 2-4 s of look-ahead are all at least as good as none.
+  lookahead_enabled: true
+  # [frames] 3 s: on a public match of another game (Metrica Sample Game 3) activity was still
+  # below the live/dead midpoint 3.6 s after the median restart and 0.7 s after the median
+  # stop; 3 s closes that gap without reaching into the next stoppage.
+  lookahead_frames: 75
+
+kickoff:
+  # [m] Players standing on the halfway line at a kick-off are within tracking error of it.
+  halfway_tolerance_m: 1.5
+  # [players] The line-up test needs most of each team tracked to mean anything.
+  min_players_per_team: 9
+  # [frames] Open play can split the teams by half for an instant, not for a full second.
+  min_formation_frames: 25
+  # [frames] The "kick off (start)" tag is a window containing the kick-off; play is not
+  # allowed to be live before the window opens.
+  tag_margin_frames: 0
+  # [frames] One minute: the tracked-player count is smoothed this much to find the half-time
+  # break (teams off the pitch) rather than a momentary tracking drop.
+  halftime_smoothing_frames: 1500
+
+liveness:
+  # EM iterations; the log-likelihood is flat well before this.
+  em_iterations: 25
+  # Prior of starting dead inside the fitted window (uninformative).
+  initial_dead_probability: 0.5
+  # [frames] Initial guess only (EM re-estimates both): ball in play ~30 s at a time...
+  expected_live_spell_frames: 750.0
+  # [frames] ...and a stoppage ~20 s.
+  expected_dead_spell_frames: 500.0
+  # Smallest probability any ball class may have in either state. No ball observation is
+  # conclusive: during a stoppage the ball is routinely tracked while it is thrown back or
+  # placed, and during play the tracker loses it. 2% keeps a moving ball from outvoting
+  # twenty-two players who have stopped.
+  probability_floor: 0.02
+  # Exponent on the per-frame likelihood. Consecutive frames are strongly correlated (features
+  # are smoothed over ~1 s), so each frame counts as a fraction of an independent observation.
+  emission_temperature: 0.25
+  # [m/s] EM starting point: frames where the players average less than a brisk walk are
+  # provisionally dead. Walking is ~1.4 m/s; live play averages ~2 m/s.
+  seed_activity_split_mps: 1.5
+  # [m/s] Lower bound on the activity spread of either state, so EM cannot collapse a state
+  # onto a single speed.
+  min_activity_std_mps: 0.1
+
+ownership:
+  # [m] Playing distance: a player this close can touch the ball.
+  control_radius_m: 1.5
+  # [m] Beyond this nobody can reach the ball within the next moment; the frame is a pass in
+  # flight or a loose ball and says nothing about a change.
+  reach_radius_m: 4.0
+  # [m] How much closer than the opponent the nearest player must be for a clear verdict.
+  distance_scale_m: 1.0
+  # [m/s] A ball at this speed counts half: carried balls move at running pace (< 8 m/s),
+  # passes and shots faster.
+  ball_speed_scale_mps: 8.0
+  # [nats/frame] Evidence of one frame of clear, calm control; see switch_cost for what it
+  # takes to change possession.
+  control_llr_per_frame: 0.4
+  # [m] If both teams' nearest players are within this of each other's distance, it is a duel
+  # and neither is favoured.
+  duel_margin_m: 0.5
+
+collective:
+  # Ball-free cue from team shape, learnt on pseudo-labels of this match.
+  enabled: true
+  # [frames] Centroid velocity over one second.
+  velocity_lag_frames: 25
+  # [players] Centroid and spread need most of a team.
+  min_players_per_team: 7
+  # [nats] Only frames whose ball geometry is at least this decisive become pseudo-labels.
+  pseudo_label_min_llr: 0.1
+  # Ridge penalty of the logistic fit (features are standardised).
+  ridge_penalty: 1.0
+  # Newton iterations; converges in under ten.
+  fit_iterations: 25
+  # [nats/frame] Cap: shape alone must need several seconds to overturn a possession.
+  max_llr_per_frame: 0.1
+  # Tempering for frame-to-frame correlation (shape changes over seconds, not frames).
+  temperature: 0.04
+
+tagging:
+  enabled: true
+  # Phases naming the team WITH the ball.
+  possession_codes:
+    - BUILD UP
+    - PROGRESSION
+    - BALL IN FINAL THIRD
+    - BALL IN THE BOX
+    - CREATING CHANCES
+    - LONG BALL
+    - ATTACKING TRANSITION
+  # Phases naming the team WITHOUT the ball.
+  opponent_codes:
+    - DEFENDING IN DEFENSIVE THIRD
+    - DEFENDING IN MIDDLE THIRD
+    - DEFENDING IN ATTACKING THIRD
+    - DEFENSIVE TRANSITION
+  # Phases that begin at a change of possession.
+  transition_codes:
+    - ATTACKING TRANSITION
+    - DEFENSIVE TRANSITION
+  set_piece_code: SET PIECES
+  kickoff_start_type: kick off (start)
+  # [frames] Phases are padded around the action; ignore their first and last 2 s.
+  edge_trim_frames: 50
+  # Tempering: a phase is one judgement lasting ~20 s, not 500 independent ones.
+  temperature: 0.04
+  # [nats/frame] Cap on the tagging's say, whatever its measured agreement.
+  max_llr_per_frame: 0.1
+  # [frames] Minimum pseudo-labelled frames before the agreement rate is trusted.
+  min_calibration_frames: 2500
+
+decoding:
+  # [nats] Price of a change of possession. At 0.4 nats per frame of clear control, 2 nats
+  # is repaid by about a quarter of a second of clear control: a clean first touch by the
+  # opponent counts, a ball flying past a player (down-weighted by its speed) does not.
+  # Measured, not guessed: on a public match of another game with event-based labels
+  # (scripts/validate_on_metrica.py) spellF1 is 0.60 at costs 1-2 and falls steadily above
+  # (0.58, 0.58, 0.55, 0.53 at 3, 4, 5, 6), on clean and on degraded tracking alike; at 6 the
+  # decoder found half of the possessions that match contains. The earlier value of 6 came
+  # from agreement with Smart Tagging votes, which favours long possessions because tagged
+  # phases are padded windows that a short spell of the other team cannot interrupt.
+  switch_cost: 2.0
+  # [nats] Price of declaring the ball dead / live again. The number of stoppages falls from
+  # ~130 at 6 to a plateau of ~106-110 from 12 upwards, which is also what a match contains
+  # (about 40 throw-ins, 25 free kicks, 16 goal kicks, 10 corners, kick-offs); below the
+  # plateau the extra stoppages are 3 s blips. 12 is the start of the plateau.
+  dead_enter_cost: 12.0
+  dead_exit_cost: 12.0
+  # [frames] A possession shorter than 1 s is not a controlled possession.
+  min_possession_frames: 25
+  # [frames] No restart is taken within 2 s of the ball going dead.
+  min_dead_frames: 50
+  # Lower the price of a change of possession around the start of a tagged transition phase
+  # (stage 2b). Applied in the final decode only; the tracking-only pass never sees it.
+  transition_discount_enabled: false
+  # [nats] How much cheaper a change is there: half the switch cost, so a tag makes a change
+  # easier to accept but still cannot create one without ball evidence.
+  transition_discount: 1.0
+  # [frames] The discount applies from 2 s before the tagged start...
+  transition_window_before_frames: 50
+  # [frames] ...to 3 s after it: tag timestamps are accurate to a few seconds.
+  transition_window_after_frames: 75
+
+abstention:
+  # X before the first kick-off and after the match: nothing there is graded.
+  outside_match: true
+  # [frames] Keep 60 s of labels after the last sign of play before abstaining.
+  post_match_margin_frames: 1500
+  # In-play abstention is implemented but off: the ranking metric fills X with the previous
+  # label, so X can never score above repeating that label, and it costs macroF1.
+  in_play_enabled: false
+  # [frames] Only disappearances longer than 8 s would qualify...
+  in_play_min_gap_frames: 200
+  # [frames] ...and only 3 s or more away from either end of the possession.
+  in_play_boundary_guard_frames: 75
+
+events:
+  # [m] The ball is out once it is this far beyond a line. Zero: on a public match of another
+  # game the first frame beyond the line fell within 0.5 s of the hand-timed "ball out" for
+  # 94% of exits (median 0.08 s early); with a 0.5 m margin a fifth of the exits were missed.
+  exit_margin_m: 0.0
+  # [m] A ball lost by the tracker within this distance of a line, while moving towards it,
+  # is taken to have left the pitch: at 10-20 m/s it covers this in a few frames.
+  line_proximity_m: 3.0
+  # [frames] "Moving towards the line" is judged over 0.2 s, enough to beat position jitter.
+  heading_lag_frames: 5
+  # [frames] A ball must lie still for 1 s to count as placed for a set piece; a ball trapped
+  # under a foot in open play rests for less.
+  min_rest_frames: 25
+  # [m/s] ...and must then reach passing speed: a restart is a kick, not a nudge into place.
+  kick_speed_mps: 5.0
+  # [frames] The kick has to show within 0.6 s of the ball starting to move (speed is smoothed
+  # over 0.2 s, so the peak lags the contact by a few frames).
+  kick_window_frames: 15
+  # [frames] Velocity before and after a frame is measured over 0.32 s. The provider's ball
+  # track is smoothed: the measured velocity change keeps growing with this lag up to ~8
+  # frames (median 0.8 m/s at 3 frames, 2.1 m/s at 8), i.e. a touch is spread over about a
+  # third of a second and a shorter lag sees only a fraction of it.
+  kink_lag_frames: 8
+  # [m/s] Smallest change of the velocity vector that counts as a touch: less than any pass
+  # or trap (5-20 m/s), more than drag and bounce. With the lag above it yields ~1,700 touches
+  # on ~75 minutes of tracked ball, the order of magnitude of a match (~1,000 passes, each a
+  # strike and a reception, minus those lost to gaps).
+  kink_min_velocity_change_mps: 4.0
+  # [frames] Two touches are at least 0.3 s apart; nearer peaks are one contact.
+  kink_min_separation_frames: 8
+
+dead_edges:
+  # Snap stoppage edges to ball events after decoding. On for stoppage STARTS only (see the
+  # end windows below).
+  enabled: true
+  # [frames] How far before the decoded start of a stoppage an exit is looked for. The decoder
+  # needs about a second of walking players before it calls the ball dead, so the true exit is
+  # usually earlier: 3 s back...
+  start_window_before_frames: 75
+  # [frames] ...and 1 s forward.
+  start_window_after_frames: 25
+  # [frames] Window around the decoded restart in which a kick or a moving reappearance is
+  # looked for. ZERO = restarts are not snapped: tried with 75/75 and rejected. Half of the
+  # decoded restarts already sit exactly on such an event; of the 29 that moved, those pushed
+  # later lowered the share of restarts within 3 s of tagged set pieces from 63% to 58%. On
+  # this tracker a ball is often picked up again only after play has resumed, so "first frame
+  # the ball is seen moving" is a late estimate of the restart, not an unbiased one.
+  end_window_before_frames: 0
+  end_window_after_frames: 0
+  # [frames] An edge may not shorten the stoppage or a neighbouring possession below 1 s.
+  min_remaining_frames: 25
+  # Locate a whistle by the strongest common deceleration when no ball event is found. Off:
+  # on the other match it fell within 1 s of the stop only 55-60% of the time, no better than
+  # the decoder's own edge.
+  use_deceleration: false
+  # [frames] Deceleration is the drop in mean speed across 2 x 0.5 s.
+  deceleration_lag_frames: 12
+
+touch_snap:
+  # Move each direct H<->A change to the nearest touch by the team taking over (stage 2a).
+  enabled: false
+  # [frames] Search 1.5 s before the decoded change: control is recognised after the ball has
+  # been won, so the winning touch is usually earlier...
+  window_before_frames: 38
+  # [frames] ...and 1.5 s after it.
+  window_after_frames: 38
+  # [m] A kink counts as a touch by a team if its nearest player is this close to the ball:
+  # playing distance plus what the smoothed ball track and the player positions can be off by.
+  touch_radius_m: 2.5
+  # [frames] A change may not shorten either possession below 1 s.
+  min_remaining_frames: 25
+
+touch_evidence:
+  # Add ownership evidence at every touch (an abrupt change of ball velocity): the team of the
+  # player at the ball when it turned. Proximity alone needs a calm ball near one player for a
+  # while, so it misses possessions that consist of one or two touches. Off: it raised spellF1
+  # on six other matches with a lightly damaged ball track, but not (+0.005 on average over
+  # ten matches) once the damage was fitted to the provided tracker (TECHNICAL.md, 4.2).
+  enabled: false
+  # [nats] Evidence one touch gives to the team that made it. Against a switch cost of 2, a
+  # value between 2 and 4 lets a touch followed by any further sign of control change the
+  # possession, while a lone deflection (two switches, 4 nats) does not.
+  llr_per_touch: 3.0
+  # [m] The touch is credited to a team if its nearest player is this close to the ball:
+  # playing distance plus what the smoothed ball track and the player positions can be off by.
+  touch_radius_m: 2.5
+  # [m] ...and closer than the opponent's nearest player by at least this much; otherwise it is
+  # a duel and the touch says nothing.
+  duel_margin_m: 0.0
+
+learned_ownership:
+  # Replace the hand-set ownership evidence (the proximity factors of `ownership` and the
+  # pulses of `touch_evidence`) by a logistic regression trained on other matches whose
+  # tracking provider labels possession frame by frame. Everything else stays as it is.
+  # On ten other matches, scored only on matches the model was not fitted on, this raised
+  # spellF1 by 0.06-0.13 with a lightly damaged ball track, but only by -0.03 to +0.07 with
+  # damage fitted to the provided tracker, and on this match it agrees less with the
+  # independent tags than the hand-set evidence (TECHNICAL.md, section 2, "Tried and rejected").
+  enabled: false
+  # [-] The model is fitted as if frames were independent; they are not, so its log-odds are
+  # scaled down before the decoder sums them over time. Held-out scores are flat from 0.2 to
+  # 0.6; the middle was taken.
+  llr_scale: 0.35
+  # [m] "Only one team has a player this close to the ball": from a ball at the feet (1 m)
+  # to a ball within a stride or two (4 m).
+  radii_m: [1.0, 1.5, 2.5, 4.0]
+  # [m] The same statement split by ball speed, for playing distance and for touch distance.
+  banded_radii_m: [1.5, 2.5]
+  # [m/s] Ball at running pace, at passing pace, struck hard.
+  speed_band_edges_mps: [3.0, 8.0]
+  # [m] How much closer one team has to be for "closer" to saturate.
+  side_scale_m: 1.0
+  # [m] "Which team is closer" counts while somebody can reach the ball (4 m) and again
+  # while somebody has it at his feet (1.5 m).
+  side_reach_radii_m: [4.0, 1.5]
+  # [m] Scale for comparing the second-nearest players (the nearest support or presser).
+  second_scale_m: 3.0
+  # [m] Players within this distance of the ball count as being around it.
+  support_radius_m: 6.0
+  # [players] A surplus of this many players around the ball is one unit...
+  support_scale_players: 3.0
+  # [-] ...and the surplus is capped at this many units.
+  support_clip: 1.5
+  # [m] Radius of the "alone at the ball" statement averaged over time.
+  context_radius_m: 1.5
+  # [frames] Averaging windows before and after each frame: half a second and a second and
+  # a half. The model runs offline, so it may look ahead.
+  context_windows_frames: [12, 38]
+  # [frames] How fast the memory of the latest touch fades: half a second, two seconds, six.
+  last_touch_decay_frames: [12.0, 50.0, 150.0]
+  # [frames] The same for the next touch: a team about to play the ball usually has it now.
+  next_touch_decay_frames: [12.0, 50.0]
+  # [frames] Memory of a second touch in a row by the same team (3 s).
+  repeated_touch_decay_frames: 75.0
+  # Trained weights, one per feature in the order of `ownership_feature_names`; written by
+  # scripts/train_ownership.py from the seven open DFL matches.
+  weights: [0.171969, -0.049296, 0.225071, 0.208904, -0.148675, 0.025800, -0.045436, 0.787076, 0.045727, -0.315870, -0.069923, 0.198772, -0.069319, -0.174074, 0.423344, -0.248731, 0.656935, 0.680782, -0.185574, -0.003302, 1.289964, 0.369731, -0.933919, -0.397414, 2.170864, -0.132651, -0.427770, 0.426127, -0.230185, 0.610994]
+
+learned_liveness:
+  # Replace the per-frame emissions of the unsupervised live/dead model by a logistic
+  # regression trained on other matches whose tracking provider says frame by frame whether
+  # the ball is in play. The decoder, its costs and everything downstream stay as they are.
+  # Fitted on the seven DFL matches; held out, it raised spellF1 on all seven (+0.03), on 13
+  # of 20 SkillCorner and 3 of 3 Metrica test matches, and on this match it moves restarts
+  # closer to the tagged set pieces (TECHNICAL.md, section 4.2).
+  enabled: true
+  # [-] Frames are not independent, so the model's log-probabilities are scaled down before
+  # the decoder sums them over time.
+  llr_scale: 0.25
+  # [m/s] Collective activity is capped at a sprinting average and expressed in units of a
+  # jog, so that its square stays of order one.
+  activity_cap_mps: 8.0
+  activity_scale_mps: 3.0
+  # [frames] Activity averaged before and after each frame: players stop within a second of a
+  # whistle and need several seconds to get going after a restart, so the shape around a
+  # frame separates a stop from a restart. Pairs are [start, stop) offsets.
+  activity_windows_frames: [[-150, -75], [-75, 0], [0, 75], [75, 150], [150, 375]]
+  # [frames] Share of frames with a ball position around each frame: a long disappearance is
+  # the strongest single sign of a stoppage on automatic tracking.
+  visibility_windows_frames: [[-25, 26], [-75, 76], [-250, 251], [-75, 0], [0, 75]]
+  # [frames] Time since and until the ball is seen, capped at a minute.
+  gap_cap_frames: 1500
+  # [m/s] Ball speed capped at a hard shot and scaled by a firm pass...
+  ball_speed_cap_mps: 30.0
+  ball_speed_scale_mps: 10.0
+  # [m/s] ...and a ball slower than this is resting (placed for a restart, or held).
+  resting_speed_mps: 0.5
+  # [m] Distance inside the pitch boundary, capped at 20 m and scaled by 10 m; a ball within a
+  # metre of a line is at a throw-in, corner or goal-kick position.
+  edge_cap_m: 20.0
+  edge_scale_m: 10.0
+  near_line_m: 1.0
+  # [m] Distance from the ball to the nearest player, capped at 10 m and scaled by 5 m, and
+  # its average over two seconds around the frame.
+  nearest_cap_m: 10.0
+  nearest_scale_m: 5.0
+  nearest_window_frames: 50
+  # [m/s] Share of players faster than a run, and the spread of player speeds (capped).
+  sprint_speed_mps: 4.0
+  speed_spread_cap_mps: 5.0
+  # [m] Distance between the team centroids (10 m when a team is not tracked), capped at 40 m
+  # and scaled by 20 m: teams merge at set pieces and split at kick-offs.
+  team_gap_default_m: 10.0
+  team_gap_cap_m: 40.0
+  team_gap_scale_m: 20.0
+  # [m] Spread of all players along each axis, and how far their centre is from halfway.
+  layout_scale_m: 20.0
+  # [frames] Memory of the latest ball exit, restart kick and reappearance (2 s and 10 s)...
+  event_latest_decays_frames: [50.0, 250.0]
+  # [frames] ...and anticipation of the next one (3 s).
+  event_next_decays_frames: [75.0]
+  # Trained weights, intercept first, in feature order; written by scripts/train_liveness.py.
+  weights: [-2.075525, 1.618999, -2.770023, -3.676594, -4.321516, -4.935498, -1.981305, -0.823709, 11.961594, -4.596566, 0.268085, 0.027101, 0.600933, 2.202884, 1.678426, 0.932142, 1.276667, -3.408044, 2.136879, 0.530784, -0.749098, -0.584355, 0.002593, 1.783735, -0.751889, 0.177442, -2.867061, -1.654705, -2.548177, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 1.360154, -3.297761, 1.782994, -4.616004, 1.616894, -0.498743, 3.866449, -1.604939, 2.068163]
+
+report:
+  # Tolerances used only by the label-free diagnostics; they do not affect any label.
+  # [frames] Restart within 1 s of the typical position inside a set-piece tag.
+  restart_tight_tolerance_frames: 25
+  # [frames] Restart within 3 s of it.
+  restart_loose_tolerance_frames: 75
+  # [frames] A stoppage boundary "has" a ball event if one lies within 1 s.
+  boundary_event_tolerance_frames: 25
+  # [frames] A change of possession "has" a touch if a trajectory kink lies within 0.5 s.
+  switch_kink_tolerance_frames: 13
